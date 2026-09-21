@@ -3,7 +3,7 @@ name: TikTok Bot
 on:
   workflow_dispatch:        # manual start button
   schedule:
-    - cron: "0 */2 * * *"   # a new short session every 2 hours
+    - cron: "0 * * * *"     # a new session every hour
 
 concurrency:
   group: tiktok-bot
@@ -12,7 +12,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 130
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@v4
 
@@ -39,9 +39,9 @@ jobs:
           TZ: "Asia/Baghdad"
           SOURCE: "feed"          # hashtag pages show a puzzle to GitHub servers, so use the For You feed
           KURDISH_ONLY: "0"       # the GitHub server feed is not Kurdish, so visit everyone
-          RUN_MINUTES: "110"
-          SESSION_CAP: "70"
-          START_JITTER_MIN: "15"
+          RUN_MINUTES: "55"
+          SESSION_CAP: "120"
+          START_JITTER_MIN: "5"
           ACTIVE_HOURS: "10-23"
           SPEED: "1.5"
         run: python bot.py
