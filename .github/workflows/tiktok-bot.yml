@@ -37,7 +37,8 @@ jobs:
         env:
           TIKTOK_COOKIES: ${{ secrets.TIKTOK_COOKIES }}
           TZ: "Asia/Baghdad"
-          SOURCE: "tags"
+          SOURCE: "feed"          # hashtag pages show a puzzle to GitHub servers, so use the For You feed
+          KURDISH_ONLY: "0"       # the GitHub server feed is not Kurdish, so visit everyone
           RUN_MINUTES: "110"
           SESSION_CAP: "70"
           START_JITTER_MIN: "15"
