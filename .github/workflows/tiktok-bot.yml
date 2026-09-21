@@ -5,6 +5,9 @@ on:
   schedule:
     - cron: "0 * * * *"     # a new session every hour
 
+permissions:
+  contents: write          # lets the job save the small stats file for the dashboard
+
 concurrency:
   group: tiktok-bot
   cancel-in-progress: false
@@ -13,6 +16,11 @@ jobs:
   run:
     runs-on: ubuntu-latest
     timeout-minutes: 70
+    env:
+      TZ: "Asia/Baghdad"
+      PROFILE_CAP: "1000"    # per day
+      LIKE_CAP: "100"
+      COMMENT_CAP: "50"
     steps:
       - uses: actions/checkout@v4
 
@@ -36,7 +44,6 @@ jobs:
       - name: Run bot
         env:
           TIKTOK_COOKIES: ${{ secrets.TIKTOK_COOKIES }}
-          TZ: "Asia/Baghdad"
           SOURCE: "feed"          # hashtag pages show a puzzle to GitHub servers, so use the For You feed
           KURDISH_ONLY: "0"       # the GitHub server feed is not Kurdish, so visit everyone
           RUN_MINUTES: "55"
@@ -44,9 +51,6 @@ jobs:
           START_JITTER_MIN: "5"
           ACTIVE_HOURS: "10-23"
           SPEED: "1.5"
-          PROFILE_CAP: "1000"
-          LIKE_CAP: "100"
-          COMMENT_CAP: "50"
           LIKE_CHANCE: "0.08"
           COMMENT_CHANCE: "0.04"
           COMMENT_STYLE: "hearts"
@@ -58,6 +62,16 @@ jobs:
         with:
           path: stats.json
           key: stats-${{ github.run_id }}
+
+      - name: Publish counters for the dashboard
+        if: always()
+        continue-on-error: true
+        run: |
+          python publish_stats.py
+          git config user.name "stats-bot"
+          git config user.email "stats-bot@users.noreply.github.com"
+          git add stats-public.json
+          git diff --cached --quiet || (git commit -q -m "stats" && git pull --rebase -q && git push -q)
 
       - name: Save debug files if something failed
         if: failure()
