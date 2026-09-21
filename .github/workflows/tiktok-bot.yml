@@ -3,7 +3,7 @@ name: TikTok Bot
 on:
   workflow_dispatch:        # manual start button
   schedule:
-    - cron: "0 */6 * * *"   # restarts automatically every 6 hours
+    - cron: "0 */2 * * *"   # a new short session every 2 hours
 
 concurrency:
   group: tiktok-bot
@@ -12,7 +12,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 355
+    timeout-minutes: 130
     steps:
       - uses: actions/checkout@v4
 
@@ -26,13 +26,31 @@ jobs:
           pip install -r requirements.txt
           python -m playwright install --with-deps chromium
 
+      - name: Restore daily counters
+        uses: actions/cache/restore@v4
+        with:
+          path: stats.json
+          key: stats-${{ github.run_id }}
+          restore-keys: stats-
+
       - name: Run bot
         env:
           TIKTOK_COOKIES: ${{ secrets.TIKTOK_COOKIES }}
-          RUN_MINUTES: "335"
-          SPEED: "3"
-          MODE: "tab"
+          TZ: "Asia/Baghdad"
+          SOURCE: "tags"
+          RUN_MINUTES: "110"
+          SESSION_CAP: "70"
+          START_JITTER_MIN: "15"
+          ACTIVE_HOURS: "10-23"
+          SPEED: "1.5"
         run: python bot.py
+
+      - name: Save daily counters
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: stats.json
+          key: stats-${{ github.run_id }}
 
       - name: Save debug files if something failed
         if: failure()
