@@ -45,10 +45,10 @@ jobs:
           ACTIVE_HOURS: "10-23"
           SPEED: "1.5"
           PROFILE_CAP: "1000"
-          LIKE_CAP: "200"
-          COMMENT_CAP: "100"
-          LIKE_CHANCE: "0.16"
-          COMMENT_CHANCE: "0.08"
+          LIKE_CAP: "100"
+          COMMENT_CAP: "50"
+          LIKE_CHANCE: "0.08"
+          COMMENT_CHANCE: "0.04"
           COMMENT_STYLE: "hearts"
         run: python bot.py
 
