@@ -16,6 +16,7 @@ import os
 import random
 import re
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -47,6 +48,7 @@ PROFILE_MAX = env_float("PROFILE_MAX", 8)
 DEDUPE = os.getenv("DEDUPE", "1") == "1"         # never visit the same creator twice
 HEADLESS = os.getenv("HEADLESS", "1") == "1"
 MAX_ERRORS_IN_ROW = int(env_float("MAX_ERRORS_IN_ROW", 8))
+STALL_MINUTES = env_float("STALL_MINUTES", 0)      # stop if nothing is logged for this long (0 = off)
 SPEED = max(0.5, env_float("SPEED", 1))          # 1 = normal, 2 = twice as fast, ...
 ORIGIN = re.match(r"https?://[^/]+", FEED_URL).group(0)
 
@@ -109,8 +111,33 @@ KURDISH_WORDS = (
 )
 
 
+LAST_LOG = [time.time()]
+
+
 def log(msg):
+    LAST_LOG[0] = time.time()
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+def start_watchdog(deadline):
+    """Safety net: if the browser freezes, end the run instead of hanging until GitHub kills it."""
+    def run():
+        while True:
+            time.sleep(20)
+            now = time.time()
+            if now > deadline + 300:
+                log("time is over but the bot did not stop by itself, stopping now")
+                break
+            if STALL_MINUTES and now - LAST_LOG[0] > STALL_MINUTES * 60:
+                log(f"nothing happened for {int(STALL_MINUTES)} minutes (frozen browser), stopping now")
+                break
+        try:
+            save_stats()
+        except Exception:
+            pass
+        os._exit(0)
+
+    threading.Thread(target=run, daemon=True).start()
 
 
 def pause(lo, hi, floor=0.25):
@@ -926,6 +953,7 @@ def main():
             return
 
     code = 0
+    start_watchdog(deadline)
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=HEADLESS,
