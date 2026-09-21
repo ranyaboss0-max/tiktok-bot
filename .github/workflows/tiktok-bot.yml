@@ -1,0 +1,43 @@
+name: TikTok Bot
+
+on:
+  workflow_dispatch:        # manual start button
+  schedule:
+    - cron: "0 */6 * * *"   # restarts automatically every 6 hours
+
+concurrency:
+  group: tiktok-bot
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: |
+          pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Run bot
+        env:
+          TIKTOK_COOKIES: ${{ secrets.TIKTOK_COOKIES }}
+          RUN_MINUTES: "335"
+          SPEED: "3"
+          MODE: "tab"
+        run: python bot.py
+
+      - name: Save debug files if something failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug
+          path: debug/
+          if-no-files-found: ignore
