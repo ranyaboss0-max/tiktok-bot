@@ -45,6 +45,7 @@ WATCH_MIN = env_float("WATCH_MIN", 2)            # seconds "watching" a video
 WATCH_MAX = env_float("WATCH_MAX", 6)
 PROFILE_MIN = env_float("PROFILE_MIN", 3)        # seconds staying on a profile
 PROFILE_MAX = env_float("PROFILE_MAX", 8)
+PROFILE_HARD_MIN = env_float("PROFILE_HARD_MIN", 5)  # always stay on a profile at least this long (real seconds, not sped up)
 DEDUPE = os.getenv("DEDUPE", "1") == "1"         # never visit the same creator twice
 HEADLESS = os.getenv("HEADLESS", "1") == "1"
 MAX_ERRORS_IN_ROW = int(env_float("MAX_ERRORS_IN_ROW", 8))
@@ -55,7 +56,7 @@ ORIGIN = re.match(r"https?://[^/]+", FEED_URL).group(0)
 SOURCE = os.getenv("SOURCE", "tags")             # "tags" = Kurdish hashtag pages, "feed" = For You
 TAGS = [t.strip() for t in os.getenv(
     "TAGS",
-    "kurdish,kurdistan,kurd,kurdm,kurdishtiktok,\u06a9\u0648\u0631\u062f\u06cc,\u06a9\u0648\u0631\u062f\u0633\u062a\u0627\u0646,\u06a9\u0648\u0631\u062f,\u0647\u06d5\u0648\u0644\u06ce\u0631,\u0633\u0644\u06ce\u0645\u0627\u0646\u06cc,\u062f\u0647\u06c6\u06a9",
+    "kurdish,kurdistan,kurd,kurdm,kurdishtiktok,کوردی,کوردستان,کورد,هەولێر,سلێمانی,دهۆک",
 ).split(",") if t.strip()]
 PER_TAG = int(env_float("PER_TAG", 12))          # profiles per hashtag page before reloading
 RELOAD_EVERY = int(env_float("RELOAD_EVERY", 12))  # feed mode: reload the feed every N videos
@@ -84,28 +85,28 @@ USER_AGENT = (
 DEBUG_DIR = Path("debug")
 
 COMMENTS_CKB = [  # Sorani
-    "\u0632\u06c6\u0631 \u062c\u0648\u0627\u0646\u06d5 \U0001F44F",
-    "\u062f\u06d5\u0633\u062a\u062a \u062e\u06c6\u0634 \U0001F525",
-    "\u0632\u06c6\u0631 \u062e\u06c6\u0634\u06d5 \u2764\ufe0f",
-    "\u0628\u06d5\u0695\u0627\u0633\u062a\u06cc \u062c\u0648\u0627\u0646\u06d5",
-    "\u0633\u0648\u067e\u0627\u0633 \U0001F64F",
-    "\u0645\u0627\u0634\u06d5\u0627\u06b5\u06b5\u0627 \U0001F44C",
-    "\u2764\ufe0f\u2764\ufe0f",
-    "\U0001F525\U0001F525",
+    "زۆر جوانە 👏",
+    "دەستت خۆش 🔥",
+    "زۆر خۆشە ❤️",
+    "بەڕاستی جوانە",
+    "سوپاس 🙏",
+    "ماشەاڵڵا 👌",
+    "❤️❤️",
+    "🔥🔥",
 ]
 COMMENTS_KMR = [  # Kurmanji
-    "Pir xwe\u015f e \U0001F44F",
-    "Dest\u00ea te sax \U0001F525",
-    "Spas \u2764\ufe0f",
-    "Pir ba\u015f e \U0001F44C",
-    "\u2764\ufe0f\u2764\ufe0f",
-    "\U0001F525\U0001F525",
+    "Pir xweş e 👏",
+    "Destê te sax 🔥",
+    "Spas ❤️",
+    "Pir baş e 👌",
+    "❤️❤️",
+    "🔥🔥",
 ]
 
-SORANI_LETTERS = set("\u06ce\u06c6\u0695\u06b5\u06d5\u06a4")  # letters used only in Sorani Kurdish
+SORANI_LETTERS = set("ێۆڕڵەڤ")  # letters used only in Sorani Kurdish
 KURDISH_WORDS = (
-    "kurd", "\u06a9\u0648\u0631\u062f", "\u0647\u06d5\u0648\u0644\u06ce\u0631",
-    "\u0633\u0644\u06ce\u0645\u0627\u0646\u06cc", "\u062f\u0647\u06c6\u06a9",
+    "kurd", "کورد", "هەولێر",
+    "سلێمانی", "دهۆک",
     "kurmanc", "sorani", "hewler", "hawler", "erbil", "slemani", "sulaimani",
     "sulaymani", "duhok", "zakho", "rojava", "bashur", "rojhelat",
 )
@@ -155,7 +156,7 @@ def is_kurdish(text):
 
 
 def is_arabic_script(text):
-    return any("\u0600" <= ch <= "\u06ff" for ch in (text or ""))
+    return any("؀" <= ch <= "ۿ" for ch in (text or ""))
 
 
 COMMENTS_CUSTOM = []
@@ -640,17 +641,23 @@ def comment_current(page, context_text):
         page.keyboard.type(text, delay=random.randint(70, 170))
         pause(0.8, 2)
         post = page.locator('[data-e2e="comment-post"]')
+        posted = False
         if post.count() > 0:
-            post.first.click(timeout=3000)
-        else:
+            try:
+                post.first.click(timeout=3000)
+                posted = True
+            except (PWTimeout, PWError):
+                pass  # button not clickable right now, fall back to Enter below
+        if not posted:
             page.keyboard.press("Enter")
         COMMENT_FAILS = 0
         bump("comments")
         log(f"commented (today: {STATS['comments']}/{COMMENT_CAP})")
         pause(1.5, 3)
         return True
-    except (PWTimeout, PWError):
+    except (PWTimeout, PWError) as e:
         COMMENT_FAILS += 1
+        log(f"comment failed, skipping ({type(e).__name__})")
         return False
     finally:
         close_comments(page)
@@ -669,13 +676,58 @@ def block_heavy(tab):
     )
 
 
-def dwell_on_profile(tab):
+def dwell_on_profile(tab, arrived_at=None):
+    if arrived_at is not None:
+        left = PROFILE_HARD_MIN - (time.time() - arrived_at)
+        if left > 0:
+            time.sleep(left)  # never leave a profile before this many real seconds have passed
     pause(1, 2)
     try:
         tab.mouse.wheel(0, random.randint(150, 500))
     except PWError:
         pass
-    pause(PROFILE_MIN, PROFILE_MAX, floor=1.5)  # long enough for the visit to count
+    pause(PROFILE_MIN, PROFILE_MAX, floor=1.5)  # a little extra, natural variation
+
+
+def act_on_profile(tab, do_like, do_comment, context_text, target_vid=None):
+    """Open a video from the CREATOR'S OWN profile grid and like/comment it there
+    (not on the main feed / hashtag page). Verified against the real TikTok profile
+    layout: [data-e2e="user-post-item"] opens an in-page overlay with the usual
+    like-icon / comment-icon, closed with the [aria-label="Close"] button."""
+    try:
+        tab.wait_for_selector('[data-e2e="user-post-item"]', timeout=8000)
+    except PWTimeout:
+        return False  # empty or private profile: nothing to like/comment on
+    try:
+        posts = tab.locator('[data-e2e="user-post-item"]')
+        count = posts.count()
+        if count == 0:
+            return False
+        opened = False
+        if target_vid:
+            match = tab.locator(f'[data-e2e="user-post-item"]:has(a[href*="/video/{target_vid}"])')
+            if match.count() > 0:
+                match.first.click(timeout=4000)
+                opened = True
+        if not opened:
+            posts.nth(random.randint(0, min(2, count - 1))).click(timeout=4000)
+        tab.wait_for_selector('[data-e2e="like-icon"]', timeout=8000)
+        pause(1.5, 3)
+        if do_like:
+            like_current(tab)
+        if do_comment:
+            comment_current(tab, context_text)
+        pause(1, 2.5)
+        return True
+    except (PWTimeout, PWError):
+        return False
+    finally:
+        try:
+            close_btn = tab.locator('[aria-label="Close"]').first
+            if close_btn.count() > 0:
+                close_btn.click(timeout=3000)
+        except PWError:
+            pass
 
 
 def record_visit(user):
@@ -718,10 +770,8 @@ def visit_feed_video(page):
     if random.random() < 0.12:
         pause(8, 20)  # sometimes really watch it
 
-    if want(LIKE_CHANCE, "likes", LIKE_CAP):
-        like_current(page)
-    if COMMENT_FAILS < 3 and want(COMMENT_CHANCE, "comments", COMMENT_CAP):
-        comment_current(page, text)
+    do_like = want(LIKE_CHANCE, "likes", LIKE_CAP)
+    do_comment = COMMENT_FAILS < 3 and want(COMMENT_CHANCE, "comments", COMMENT_CAP)
 
     if random.random() < SKIP_CHANCE or not user:
         advance(page, user)
@@ -729,10 +779,15 @@ def visit_feed_video(page):
 
     tab = page.context.new_page()
     try:
-        block_heavy(tab)
+        if not (do_like or do_comment):
+            block_heavy(tab)
+        arrived = time.time()
         tab.goto(f"{ORIGIN}/@{user}", wait_until="domcontentloaded", timeout=30000,
                  referer=FEED_URL)
-        dwell_on_profile(tab)
+        if do_like or do_comment:
+            # like/comment on a video from THEIR profile, not on the main feed
+            act_on_profile(tab, do_like, do_comment, text)
+        dwell_on_profile(tab, arrived)
     finally:
         try:
             tab.close()
@@ -838,30 +893,21 @@ def collect_candidates(page, tag):
 
 
 def visit_candidate(ctx, cand):
-    """(Rarely) like/comment on the creator's video, then visit the profile."""
+    """Visit the creator's profile; (rarely) like/comment happens ON the profile
+    (opening one of their own videos there), never on the hashtag page."""
     user = cand["user"]
     do_like = want(LIKE_CHANCE, "likes", LIKE_CAP)
     do_comment = COMMENT_FAILS < 3 and want(COMMENT_CHANCE, "comments", COMMENT_CAP)
     tab = ctx.new_page()
     try:
-        if do_like or do_comment:
-            tab.goto(f"{ORIGIN}/@{user}/video/{cand['vid']}", wait_until="domcontentloaded",
-                     timeout=30000, referer=f"{ORIGIN}/tag/")
-            try:
-                tab.wait_for_selector('[data-e2e="like-icon"]', timeout=15000)
-                pause(3, 8)  # watch a little
-                if do_like:
-                    like_current(tab)
-                if do_comment:
-                    comment_current(tab, cand.get("text", ""))
-            except PWTimeout:
-                pass
-            pause(1, 3)
-        else:
+        if not (do_like or do_comment):
             block_heavy(tab)
+        arrived = time.time()
         tab.goto(f"{ORIGIN}/@{user}", wait_until="domcontentloaded", timeout=30000,
                  referer=ORIGIN + "/")
-        dwell_on_profile(tab)
+        if do_like or do_comment:
+            act_on_profile(tab, do_like, do_comment, cand.get("text", ""), target_vid=cand.get("vid"))
+        dwell_on_profile(tab, arrived)
     finally:
         try:
             tab.close()
