@@ -51,6 +51,7 @@ jobs:
           START_JITTER_MIN: "5"
           ACTIVE_HOURS: "10-23"
           SPEED: "1.5"
+          STALL_MINUTES: "8"      # if the browser freezes for 8 minutes, end the session
           LIKE_CHANCE: "0.08"
           COMMENT_CHANCE: "0.04"
           COMMENT_STYLE: "hearts"
