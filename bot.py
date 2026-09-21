@@ -732,6 +732,8 @@ def run_feed(page, deadline, pacer):
             else:
                 result = visit_feed_video(page)
                 checked += 1
+                if result != "visited":
+                    pause(1.0, 3.0)
                 if result == "visited":
                     errors = 0
                     if not pacer.done_one(deadline):
@@ -759,10 +761,27 @@ def run_feed(page, deadline, pacer):
 # --------------------------------------------------------------------------- #
 # SOURCE = tags : Kurdish hashtag pages -> new Kurdish creators
 # --------------------------------------------------------------------------- #
+def diag(page):
+    """Log what the page really shows (helps when TikTok serves an empty/blocked page)."""
+    try:
+        info = page.evaluate(
+            "() => ({u: location.href, t: document.title, "
+            "v: document.querySelectorAll('a[href*=\"/video/\"]').length, "
+            "b: (document.body.innerText || '').replace(/\\s+/g, ' ').slice(0, 160)})")
+        log(f"page shows: url={info.get('u')} title={info.get('t')!r} video_links={info.get('v')} "
+            f"text={info.get('b')!r}")
+    except Exception:
+        pass
+
+
 def collect_candidates(page, tag):
     """Open a hashtag page and return NEW Kurdish creators found there."""
     page.goto(f"{ORIGIN}/tag/{quote(tag)}", wait_until="domcontentloaded", timeout=60000)
-    page.wait_for_selector('a[href*="/video/"]', timeout=25000)
+    try:
+        page.wait_for_selector('a[href*="/video/"]', timeout=25000)
+    except PWTimeout:
+        diag(page)
+        raise
     pause(2, 4)
     for _ in range(random.randint(2, 4)):  # scroll to load more videos
         try:
@@ -820,7 +839,7 @@ def visit_candidate(ctx, cand):
 
 
 def run_tags(ctx, page, deadline, pacer):
-    errors, empty_rounds, last_tag = 0, 0, None
+    errors, empty_rounds, last_tag, tag_fail = 0, 0, None, 0
     while time.time() < deadline:
         if not wait_until_allowed(deadline):
             break
@@ -834,6 +853,7 @@ def run_tags(ctx, page, deadline, pacer):
                 errors += 1
                 continue
             cands = collect_candidates(page, tag)
+            tag_fail = 0
             log(f"#{tag}: {len(cands)} new Kurdish creators found")
             if not cands:
                 empty_rounds += 1
@@ -862,7 +882,18 @@ def run_tags(ctx, page, deadline, pacer):
             errors += 1
             log(f"error ({errors}/{MAX_ERRORS_IN_ROW}): {type(e).__name__}: {str(e)[:150]}")
             save_debug(page, f"error_{errors}")
+            if isinstance(e, PWTimeout) and "/video/" in str(e):
+                tag_fail += 1
             time.sleep(random.uniform(3, 6))
+            if tag_fail >= 2:
+                # hashtag pages come back empty from this server: use the For You feed instead
+                log("hashtag pages are empty here, switching to the For You feed (Kurdish only)")
+                try:
+                    open_feed(page)
+                except Exception as e2:
+                    log(f"could not open the feed: {type(e2).__name__}")
+                    return 4
+                return run_feed(page, deadline, pacer)
         if errors >= MAX_ERRORS_IN_ROW:
             log("too many errors in a row, stopping")
             save_debug(page, "too_many_errors")
