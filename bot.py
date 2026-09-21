@@ -67,6 +67,7 @@ LIKE_CAP = int(env_float("LIKE_CAP", 50))          # max likes per day
 COMMENT_CAP = int(env_float("COMMENT_CAP", 5))     # max comments per day
 LIKE_CHANCE = env_float("LIKE_CHANCE", 0.10)       # chance to like a video
 COMMENT_CHANCE = env_float("COMMENT_CHANCE", 0.03) # chance to comment on a video
+COMMENT_STYLE = os.getenv("COMMENT_STYLE", "text")   # "text" (short Kurdish phrases) or "hearts" (only hearts)
 SKIP_CHANCE = env_float("SKIP_CHANCE", 0.2)        # skip a creator now and then
 SESSION_CAP = int(env_float("SESSION_CAP", 0))     # profiles per session (0 = no limit)
 START_JITTER_MIN = env_float("START_JITTER_MIN", 0)  # random delay before starting (minutes)
@@ -143,6 +144,10 @@ def load_comments():
 
 
 def pick_comment(context_text):
+    if COMMENT_STYLE == "hearts":
+        heart = chr(0x2764) + chr(0xFE0F)
+        return random.choice([heart, heart, heart * 2, heart * 3, chr(0x1F60D) + heart,
+                              chr(0x1F497), chr(0x1F49A) + heart, chr(0x1F495)])
     if COMMENTS_CUSTOM:
         return random.choice(COMMENTS_CUSTOM)
     return random.choice(COMMENTS_CKB if is_arabic_script(context_text) else COMMENTS_KMR)
