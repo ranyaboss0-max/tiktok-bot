@@ -15,6 +15,7 @@ import json
 import os
 import random
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -76,6 +77,7 @@ SESSION_CAP = int(env_float("SESSION_CAP", 0))     # profiles per session (0 = n
 START_JITTER_MIN = env_float("START_JITTER_MIN", 0)  # random delay before starting (minutes)
 STATS_FILE = Path("stats.json")
 SEEN_MAX = 5000
+LIVE_PUBLISH_SECONDS = env_float("LIVE_PUBLISH_SECONDS", 90)  # push fresh numbers to the dashboard this often while running
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -226,6 +228,69 @@ def bump(key):
     save_stats()
 
 
+# --------------------------------------------------------------------------- #
+# Live dashboard publishing: push stats-public.json to GitHub while the bot
+# is still running, so the dashboard updates during the run, not only after
+# it finishes. Best-effort and silent on failure - never breaks the bot.
+# --------------------------------------------------------------------------- #
+_LAST_PUBLISH = [0.0]
+_GIT_READY = [False]
+PUBLIC_STATS_FILE = Path("stats-public.json")
+
+
+def _git(*args):
+    try:
+        r = subprocess.run(["git", *args], capture_output=True, text=True, timeout=30)
+        return r.returncode == 0, (r.stdout + r.stderr).strip()
+    except Exception as e:
+        return False, str(e)
+
+
+def publish_live(force=False):
+    now = time.time()
+    if not force and now - _LAST_PUBLISH[0] < LIVE_PUBLISH_SECONDS:
+        return
+    _LAST_PUBLISH[0] = now
+    try:
+        try:
+            pub = json.loads(PUBLIC_STATS_FILE.read_text(encoding="utf-8"))
+            if not isinstance(pub, dict):
+                pub = {}
+        except (OSError, ValueError):
+            pub = {}
+        days = pub.get("days")
+        if not isinstance(days, dict):
+            days = {}
+        date = STATS.get("date")
+        if date:
+            days[date] = {
+                "profiles": int(STATS.get("profiles", 0)),
+                "likes": int(STATS.get("likes", 0)),
+                "comments": int(STATS.get("comments", 0)),
+            }
+        pub["days"] = {k: days[k] for k in sorted(days)[-60:]}
+        pub["caps"] = {"profiles": PROFILE_CAP, "likes": LIKE_CAP, "comments": COMMENT_CAP}
+        pub["updated"] = datetime.now().astimezone().isoformat(timespec="seconds")
+        PUBLIC_STATS_FILE.write_text(json.dumps(pub, indent=1), encoding="utf-8")
+
+        if not _GIT_READY[0]:
+            _git("config", "user.name", "tiktok-bot")
+            _git("config", "user.email", "tiktok-bot@users.noreply.github.com")
+            _GIT_READY[0] = True
+
+        _git("add", "stats-public.json")
+        no_change, _ = _git("diff", "--cached", "--quiet")
+        if no_change:
+            return
+        _git("commit", "-q", "-m", "live stats")
+        _git("pull", "--rebase", "-q")
+        pushed, msg = _git("push", "-q")
+        if not pushed:
+            log(f"live publish: push failed ({msg[:150]})")
+    except Exception as e:
+        log(f"live publish failed: {type(e).__name__}: {e}")
+
+
 def mark_seen(user):
     if user and user not in SEEN:
         SEEN.add(user)
@@ -290,6 +355,7 @@ class Pacer:
         left = max(0, int((deadline - time.time()) / 60))
         log(f"TOTAL: {self.count} profiles this run, {STATS.get('profiles', 0)} today "
             f"(limit {PROFILE_CAP}), ~{left} min left")
+        publish_live()
         if MAX_VISITS and self.count >= MAX_VISITS:
             return False
         if SESSION_CAP and self.session >= SESSION_CAP:
@@ -985,6 +1051,7 @@ def run_tags(ctx, page, deadline, pacer):
 def main():
     cookies = load_cookies()
     load_stats()
+    publish_live(force=True)
     load_comments()
     lower_priority()
     deadline = time.time() + RUN_MINUTES * 60
@@ -1037,6 +1104,7 @@ def main():
         log(f"finished. this run: {pacer.count} profiles. today: {STATS.get('profiles', 0)} "
             f"profiles, {STATS.get('likes', 0)} likes, {STATS.get('comments', 0)} comments")
         save_stats()
+        publish_live(force=True)
         browser.close()
     if code:
         sys.exit(code)
