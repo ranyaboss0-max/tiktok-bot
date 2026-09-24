@@ -74,8 +74,8 @@ jobs:
           git add stats-public.json
           git diff --cached --quiet || (git commit -q -m "stats" && git pull --rebase -q && git push -q)
 
-      - name: Save debug files if something failed
-        if: failure()
+      - name: Save debug files
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: debug
