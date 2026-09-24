@@ -755,19 +755,35 @@ def dwell_on_profile(tab, arrived_at=None):
     pause(PROFILE_MIN, PROFILE_MAX, floor=1.5)  # a little extra, natural variation
 
 
+_ACT_FAIL_LOGGED = [0]  # cap how many debug screenshots we save per run
+
+def _act_fail(tab, reason):
+    """Log why a like/comment attempt didn't happen, and save one screenshot+HTML
+    per run (not every time) so the actual page can be inspected afterwards."""
+    log(f"like/comment attempt failed: {reason}")
+    if _ACT_FAIL_LOGGED[0] < 3:
+        _ACT_FAIL_LOGGED[0] += 1
+        save_debug(tab, f"act_fail_{_ACT_FAIL_LOGGED[0]}_{reason}")
+
+
 def act_on_profile(tab, do_like, do_comment, context_text, target_vid=None):
     """Open a video from the CREATOR'S OWN profile grid and like/comment it there
     (not on the main feed / hashtag page). Verified against the real TikTok profile
     layout: [data-e2e="user-post-item"] opens an in-page overlay with the usual
-    like-icon / comment-icon, closed with the [aria-label="Close"] button."""
+    like-icon / comment-icon, closed with the [aria-label="Close"] button.
+    NOTE: TikTok changes this markup over time, so every failure path here logs
+    why it failed and (up to 3x per run) saves a screenshot+HTML dump, instead of
+    failing silently - that was the actual bug: real failures were invisible."""
     try:
         tab.wait_for_selector('[data-e2e="user-post-item"]', timeout=8000)
     except PWTimeout:
-        return False  # empty or private profile: nothing to like/comment on
+        _act_fail(tab, "no_posts_found")
+        return False  # empty/private profile, OR the post-grid selector no longer matches
     try:
         posts = tab.locator('[data-e2e="user-post-item"]')
         count = posts.count()
         if count == 0:
+            _act_fail(tab, "zero_posts")
             return False
         opened = False
         if target_vid:
@@ -785,7 +801,11 @@ def act_on_profile(tab, do_like, do_comment, context_text, target_vid=None):
             comment_current(tab, context_text)
         pause(1, 2.5)
         return True
-    except (PWTimeout, PWError):
+    except PWTimeout:
+        _act_fail(tab, "timeout_opening_post")
+        return False
+    except PWError as e:
+        _act_fail(tab, f"error_{type(e).__name__}")
         return False
     finally:
         try:
