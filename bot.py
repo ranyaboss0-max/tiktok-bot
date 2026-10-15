@@ -33,15 +33,16 @@ from playwright.sync_api import sync_playwright
 FEED_URL = os.getenv("FEED_URL", "https://www.tiktok.com/foryou")
 
 
-def env_float(name, default):
+def env_float(name: str, default: float) -> float:
     try:
-        return float(os.getenv(name, default))
+        val = os.getenv(name)
+        return float(val) if val is not None else float(default)
     except ValueError:
         return float(default)
 
 
 RUN_MINUTES = env_float("RUN_MINUTES", 110)      # stop after this many minutes
-MAX_VISITS = int(env_float("MAX_VISITS", 0))     # 0 = unlimited
+MAX_VISITS = int(env_float("MAX_VISITS", 0))      # 0 = unlimited
 WATCH_MIN = env_float("WATCH_MIN", 2)            # seconds "watching" a video
 WATCH_MAX = env_float("WATCH_MAX", 6)
 PROFILE_MIN = env_float("PROFILE_MIN", 3)        # seconds staying on a profile
@@ -52,13 +53,19 @@ HEADLESS = os.getenv("HEADLESS", "1") == "1"
 MAX_ERRORS_IN_ROW = int(env_float("MAX_ERRORS_IN_ROW", 8))
 STALL_MINUTES = env_float("STALL_MINUTES", 0)      # stop if nothing is logged for this long (0 = off)
 SPEED = max(0.5, env_float("SPEED", 1))          # 1 = normal, 2 = twice as fast, ...
-ORIGIN = re.match(r"https?://[^/]+", FEED_URL).group(0)
+
+origin_match = re.match(r"https?://[^/]+", FEED_URL)
+ORIGIN = origin_match.group(0) if origin_match else "https://www.tiktok.com"
 
 SOURCE = os.getenv("SOURCE", "tags")             # "tags" = Kurdish hashtag pages, "feed" = For You
-TAGS = [t.strip() for t in os.getenv(
-    "TAGS",
-    "kurdish,kurdistan,kurd,kurdm,kurdishtiktok,کوردی,کوردستان,کورد,هەولێر,سلێمانی,دهۆک",
-).split(",") if t.strip()]
+TAGS = [
+    t.strip()
+    for t in os.getenv(
+        "TAGS",
+        "kurdish,kurdistan,kurd,kurdm,kurdishtiktok,کوردی,کوردستان,کورد,هەولێر,سلێمانی,دهۆک",
+    ).split(",")
+    if t.strip()
+]
 PER_TAG = int(env_float("PER_TAG", 12))          # profiles per hashtag page before reloading
 RELOAD_EVERY = int(env_float("RELOAD_EVERY", 12))  # feed mode: reload the feed every N videos
 KURDISH_ONLY = os.getenv("KURDISH_ONLY", "1") == "1"
@@ -77,7 +84,7 @@ SESSION_CAP = int(env_float("SESSION_CAP", 0))     # profiles per session (0 = n
 START_JITTER_MIN = env_float("START_JITTER_MIN", 0)  # random delay before starting (minutes)
 STATS_FILE = Path("stats.json")
 SEEN_MAX = 5000
-LIVE_PUBLISH_SECONDS = env_float("LIVE_PUBLISH_SECONDS", 90)  # push fresh numbers to the dashboard this often while running
+LIVE_PUBLISH_SECONDS = env_float("LIVE_PUBLISH_SECONDS", 90)  # push fresh numbers to dashboard
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -113,26 +120,25 @@ KURDISH_WORDS = (
     "sulaymani", "duhok", "zakho", "rojava", "bashur", "rojhelat",
 )
 
-
 LAST_LOG = [time.time()]
 
 
-def log(msg):
+def log(msg: str) -> None:
     LAST_LOG[0] = time.time()
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
-def start_watchdog(deadline):
-    """Safety net: if the browser freezes, end the run instead of hanging until GitHub kills it."""
+def start_watchdog(deadline: float) -> None:
+    """Safety net: if browser freezes, end run cleanly instead of hanging runner."""
     def run():
         while True:
             time.sleep(20)
             now = time.time()
             if now > deadline + 300:
-                log("time is over but the bot did not stop by itself, stopping now")
+                log("Deadline exceeded, forcing process shutdown.")
                 break
             if STALL_MINUTES and now - LAST_LOG[0] > STALL_MINUTES * 60:
-                log(f"nothing happened for {int(STALL_MINUTES)} minutes (frozen browser), stopping now")
+                log(f"Inactivity detected for {int(STALL_MINUTES)} mins, forcing shutdown.")
                 break
         try:
             save_stats()
@@ -143,7 +149,7 @@ def start_watchdog(deadline):
     threading.Thread(target=run, daemon=True).start()
 
 
-def pause(lo, hi, floor=0.25):
+def pause(lo: float, hi: float, floor: float = 0.25) -> None:
     """Random wait, shortened by SPEED (never below floor seconds)."""
     time.sleep(max(floor, random.uniform(lo, hi) / SPEED))
 
@@ -151,20 +157,20 @@ def pause(lo, hi, floor=0.25):
 # --------------------------------------------------------------------------- #
 # Kurdish detection
 # --------------------------------------------------------------------------- #
-def is_kurdish(text):
-    """True if the text has Sorani-only letters or Kurdish keywords/hashtags."""
+def is_kurdish(text: str) -> bool:
+    """True if text has Sorani-only letters or Kurdish keywords/hashtags."""
     t = (text or "").lower()
     return any(ch in SORANI_LETTERS for ch in t) or any(w in t for w in KURDISH_WORDS)
 
 
-def is_arabic_script(text):
-    return any("؀" <= ch <= "ۿ" for ch in (text or ""))
+def is_arabic_script(text: str) -> bool:
+    return any("\u0600" <= ch <= "\u06ff" for ch in (text or ""))
 
 
 COMMENTS_CUSTOM = []
 
 
-def load_comments():
+def load_comments() -> None:
     global COMMENTS_CUSTOM
     try:
         lines = [x.strip() for x in Path("comments.txt").read_text(encoding="utf-8").splitlines()]
@@ -173,11 +179,11 @@ def load_comments():
         COMMENTS_CUSTOM = []
 
 
-def pick_comment(context_text):
+def pick_comment(context_text: str) -> str:
     if COMMENT_STYLE == "hearts":
-        heart = chr(0x2764) + chr(0xFE0F)
-        return random.choice([heart, heart, heart * 2, heart * 3, chr(0x1F60D) + heart,
-                              chr(0x1F497), chr(0x1F49A) + heart, chr(0x1F495)])
+        heart = "\u2764\ufe0f"
+        return random.choice([heart, heart * 2, heart * 3, "\ud83d\ude0d" + heart,
+                              "\ud83d\udc97", "\ud83d\udc9a" + heart, "\ud83d\udc95"])
     if COMMENTS_CUSTOM:
         return random.choice(COMMENTS_CUSTOM)
     return random.choice(COMMENTS_CKB if is_arabic_script(context_text) else COMMENTS_KMR)
@@ -190,11 +196,11 @@ STATS = {}
 SEEN = set()
 
 
-def _today():
+def _today() -> str:
     return datetime.now().strftime("%Y-%m-%d")
 
 
-def load_stats():
+def load_stats() -> None:
     global STATS
     try:
         data = json.loads(STATS_FILE.read_text(encoding="utf-8"))
@@ -205,7 +211,7 @@ def load_stats():
     seen = data.get("seen", [])
     if not isinstance(seen, list):
         seen = []
-    if data.get("date") != _today():  # new day: counters restart, the "seen" list is kept
+    if data.get("date") != _today():
         data = {"date": _today(), "profiles": 0, "likes": 0, "comments": 0}
     data["seen"] = seen[-SEEN_MAX:]
     STATS = data
@@ -214,14 +220,17 @@ def load_stats():
     save_stats()
 
 
-def save_stats():
+def save_stats() -> None:
+    """Atomic write to prevent file corruption on unexpected crashes."""
     try:
-        STATS_FILE.write_text(json.dumps(STATS), encoding="utf-8")
+        tmp_file = STATS_FILE.with_suffix(".tmp")
+        tmp_file.write_text(json.dumps(STATS, indent=2), encoding="utf-8")
+        os.replace(tmp_file, STATS_FILE)
     except OSError:
         pass
 
 
-def bump(key):
+def bump(key: str) -> None:
     if STATS.get("date") != _today():
         load_stats()
     STATS[key] = STATS.get(key, 0) + 1
@@ -229,16 +238,14 @@ def bump(key):
 
 
 # --------------------------------------------------------------------------- #
-# Live dashboard publishing: push stats-public.json to GitHub while the bot
-# is still running, so the dashboard updates during the run, not only after
-# it finishes. Best-effort and silent on failure - never breaks the bot.
+# Live dashboard publishing
 # --------------------------------------------------------------------------- #
 _LAST_PUBLISH = [0.0]
 _GIT_READY = [False]
 PUBLIC_STATS_FILE = Path("stats-public.json")
 
 
-def _git(*args):
+def _git(*args) -> tuple[bool, str]:
     try:
         r = subprocess.run(["git", *args], capture_output=True, text=True, timeout=30)
         return r.returncode == 0, (r.stdout + r.stderr).strip()
@@ -246,7 +253,7 @@ def _git(*args):
         return False, str(e)
 
 
-def publish_live(force=False):
+def publish_live(force: bool = False) -> None:
     now = time.time()
     if not force and now - _LAST_PUBLISH[0] < LIVE_PUBLISH_SECONDS:
         return
@@ -258,7 +265,7 @@ def publish_live(force=False):
                 pub = {}
         except (OSError, ValueError):
             pub = {}
-        days = pub.get("days")
+        days = pub.get("days", {})
         if not isinstance(days, dict):
             days = {}
         date = STATS.get("date")
@@ -271,27 +278,30 @@ def publish_live(force=False):
         pub["days"] = {k: days[k] for k in sorted(days)[-60:]}
         pub["caps"] = {"profiles": PROFILE_CAP, "likes": LIKE_CAP, "comments": COMMENT_CAP}
         pub["updated"] = datetime.now().astimezone().isoformat(timespec="seconds")
-        PUBLIC_STATS_FILE.write_text(json.dumps(pub, indent=1), encoding="utf-8")
+
+        tmp_pub = PUBLIC_STATS_FILE.with_suffix(".tmp")
+        tmp_pub.write_text(json.dumps(pub, indent=1), encoding="utf-8")
+        os.replace(tmp_pub, PUBLIC_STATS_FILE)
 
         if not _GIT_READY[0]:
             _git("config", "user.name", "tiktok-bot")
             _git("config", "user.email", "tiktok-bot@users.noreply.github.com")
             _GIT_READY[0] = True
 
-        _git("add", "stats-public.json")
+        _git("add", str(PUBLIC_STATS_FILE))
         no_change, _ = _git("diff", "--cached", "--quiet")
         if no_change:
             return
-        _git("commit", "-q", "-m", "live stats")
+        _git("commit", "-q", "-m", "live stats update")
         _git("pull", "--rebase", "-q")
         pushed, msg = _git("push", "-q")
         if not pushed:
-            log(f"live publish: push failed ({msg[:150]})")
+            log(f"live publish push failed: {msg[:150]}")
     except Exception as e:
-        log(f"live publish failed: {type(e).__name__}: {e}")
+        log(f"live publish error: {type(e).__name__}: {e}")
 
 
-def mark_seen(user):
+def mark_seen(user: str) -> None:
     if user and user not in SEEN:
         SEEN.add(user)
         STATS.setdefault("seen", []).append(user)
@@ -299,7 +309,7 @@ def mark_seen(user):
             STATS["seen"] = STATS["seen"][-SEEN_MAX:]
 
 
-def in_active_hours():
+def in_active_hours() -> bool:
     if not ACTIVE_HOURS:
         return True
     try:
@@ -310,7 +320,7 @@ def in_active_hours():
     return (a <= h < b) if a <= b else (h >= a or h < b)
 
 
-def allowed_now():
+def allowed_now() -> tuple[bool, str]:
     if STATS.get("date") != _today():
         load_stats()
     if not in_active_hours():
@@ -320,8 +330,7 @@ def allowed_now():
     return True, ""
 
 
-def wait_until_allowed(deadline):
-    """True when we may work now. 'wait' mode sleeps until we may; 'exit' mode gives up."""
+def wait_until_allowed(deadline: float) -> bool:
     announced = False
     while True:
         ok, why = allowed_now()
@@ -336,7 +345,7 @@ def wait_until_allowed(deadline):
         time.sleep(300)
 
 
-def want(chance, key, cap):
+def want(chance: float, key: str, cap: int) -> bool:
     return chance > 0 and STATS.get(key, 0) < cap and random.random() < chance
 
 
@@ -348,8 +357,7 @@ class Pacer:
         self.session = 0
         self.next_break = random.randint(20, 45)
 
-    def done_one(self, deadline):
-        """Call after every profile visit. Returns False when this run must end."""
+    def done_one(self, deadline: float) -> bool:
         self.count += 1
         self.session += 1
         left = max(0, int((deadline - time.time()) / 60))
@@ -365,7 +373,7 @@ class Pacer:
                 time.sleep(max(0, min(mins * 60, deadline - time.time())))
                 self.session = 0
             else:
-                log("session limit reached, ending this run")
+                log("session limit reached, ending run")
                 return False
         if self.count >= self.next_break:
             wait = random.uniform(60, 240)
@@ -382,8 +390,7 @@ class Pacer:
 # --------------------------------------------------------------------------- #
 # Cookies
 # --------------------------------------------------------------------------- #
-def _fix_cookie(c):
-    """Convert a cookie exported by Cookie-Editor / EditThisCookie to Playwright format."""
+def _fix_cookie(c: dict) -> dict:
     out = {
         "name": c["name"],
         "value": c["value"],
@@ -405,7 +412,7 @@ def _fix_cookie(c):
     return out
 
 
-def load_cookies():
+def load_cookies() -> list[dict]:
     raw = os.getenv("TIKTOK_COOKIES", "").strip()
     if not raw and Path("cookies.json").exists():
         raw = Path("cookies.json").read_text(encoding="utf-8").strip()
@@ -413,7 +420,6 @@ def load_cookies():
         log("ERROR: no cookies found. Set TIKTOK_COOKIES or create cookies.json")
         sys.exit(2)
 
-    # 1) JSON (list or {"cookies": [...]})
     try:
         data = json.loads(raw)
         if isinstance(data, dict):
@@ -422,17 +428,16 @@ def load_cookies():
     except (json.JSONDecodeError, TypeError):
         pass
 
-    # 2) "name=value; name2=value2" header string
     cookies = []
     for part in raw.split(";"):
         if "=" in part:
             k, v = part.strip().split("=", 1)
-            cookies.append(
-                {"name": k, "value": v, "domain": ".tiktok.com", "path": "/",
-                 "secure": True, "httpOnly": False}
-            )
+            cookies.append({
+                "name": k, "value": v, "domain": ".tiktok.com", "path": "/",
+                "secure": True, "httpOnly": False
+            })
     if not cookies:
-        log("ERROR: could not understand the cookies format")
+        log("ERROR: could not parse cookies format")
         sys.exit(2)
     return cookies
 
@@ -440,7 +445,6 @@ def load_cookies():
 # --------------------------------------------------------------------------- #
 # Page helpers
 # --------------------------------------------------------------------------- #
-# Finds the creator link of the video that is currently centred on screen.
 FIND_AUTHOR_JS = r"""
 () => {
   const vh = window.innerHeight, mid = vh / 2;
@@ -469,7 +473,6 @@ FIND_AUTHOR_JS = r"""
 }
 """
 
-# Returns the element (matching a selector) that is closest to the middle of the screen.
 PICK_JS = r"""
 (sel) => {
   const vh = window.innerHeight, mid = vh / 2;
@@ -486,7 +489,6 @@ PICK_JS = r"""
 }
 """
 
-# Text of the video (caption, hashtags, names) that is currently on screen in the feed.
 ARTICLE_TEXT_JS = r"""
 () => {
   const vh = window.innerHeight, mid = vh / 2;
@@ -502,7 +504,6 @@ ARTICLE_TEXT_JS = r"""
 }
 """
 
-# On a hashtag page: every video (creator, id, caption + names).
 HARVEST_JS = r"""
 () => {
   const map = new Map();
@@ -520,8 +521,7 @@ HARVEST_JS = r"""
 """
 
 
-def find_author(page):
-    """Return (element, username) for the current video, or (None, None)."""
+def find_author(page) -> tuple[any, str | None]:
     try:
         handle = page.evaluate_handle(FIND_AUTHOR_JS)
         el = handle.as_element()
@@ -543,21 +543,21 @@ def find_author(page):
     return el, user
 
 
-def pick_center(page, selector):
+def pick_center(page, selector: str):
     try:
         return page.evaluate_handle(PICK_JS, selector).as_element()
     except PWError:
         return None
 
 
-def article_text(page):
+def article_text(page) -> str:
     try:
         return page.evaluate(ARTICLE_TEXT_JS) or ""
     except PWError:
         return ""
 
 
-def captcha_present(page):
+def captcha_present(page) -> bool:
     try:
         return page.locator(
             "#captcha_container, .captcha_verify_container, iframe[src*='captcha']"
@@ -566,28 +566,17 @@ def captcha_present(page):
         return False
 
 
-def wait_for_feed(page, timeout=20000):
-    page.wait_for_selector("article, [data-e2e='recommend-list-item-container']",
-                           timeout=timeout)
+def wait_for_feed(page, timeout: int = 20000) -> None:
+    page.wait_for_selector("article, [data-e2e='recommend-list-item-container']", timeout=timeout)
 
 
-def open_feed(page):
+def open_feed(page) -> None:
     page.goto(FEED_URL, wait_until="domcontentloaded", timeout=60000)
     wait_for_feed(page, 30000)
     pause(2, 4)
 
 
-def is_logged_in(page):
-    try:
-        if page.locator("[data-e2e='top-login-button']").count() > 0:
-            return False
-    except PWError:
-        pass
-    return any(c["name"] in ("sessionid", "sessionid_ss") for c in page.context.cookies())
-
-
-def go_next(page, prev_user):
-    """Move to the next video. Tries keyboard, then the arrow button, then mouse wheel."""
+def go_next(page, prev_user: str | None) -> bool:
     attempts = [
         lambda: page.keyboard.press("ArrowDown"),
         lambda: page.locator("[data-e2e='feed-navigation-next']").first.click(timeout=2000),
@@ -598,7 +587,6 @@ def go_next(page, prev_user):
             act()
         except PWError:
             continue
-        # wait (up to ~2.5s) until the next video is really on screen
         end = time.time() + 2.5
         while time.time() < end:
             time.sleep(0.25)
@@ -608,14 +596,13 @@ def go_next(page, prev_user):
     return False
 
 
-def advance(page, prev_user):
-    """Next video. If the feed is stuck on the same video, reload it (no endless loops)."""
+def advance(page, prev_user: str | None) -> None:
     if not go_next(page, prev_user):
-        log("stuck on the same video, reloading the feed")
+        log("stuck on video, refreshing feed")
         open_feed(page)
 
 
-def save_debug(page, name):
+def save_debug(page, name: str) -> None:
     try:
         DEBUG_DIR.mkdir(exist_ok=True)
         page.screenshot(path=str(DEBUG_DIR / f"{name}.png"))
@@ -624,36 +611,30 @@ def save_debug(page, name):
         pass
 
 
-def calm_videos(page):
-    """Mute and pause the playing video: less CPU/RAM/sound, nothing else changes."""
+def calm_videos(page) -> None:
     try:
-        page.evaluate(
-            "document.querySelectorAll('video').forEach(v => { v.muted = true; v.pause(); })"
-        )
+        page.evaluate("document.querySelectorAll('video').forEach(v => { v.muted = true; v.pause(); })")
     except PWError:
         pass
 
 
-def lower_priority():
-    """Windows: run at 'below normal' priority so the PC stays responsive.
-    The browser started afterwards inherits it."""
+def lower_priority() -> None:
     if sys.platform == "win32":
         try:
             import ctypes
             k = ctypes.windll.kernel32
-            k.SetPriorityClass(k.GetCurrentProcess(), 0x00004000)  # BELOW_NORMAL
+            k.SetPriorityClass(k.GetCurrentProcess(), 0x00004000)
         except Exception:
             pass
 
 
 # --------------------------------------------------------------------------- #
-# Likes and comments (rare, capped per day)
+# Likes and comments
 # --------------------------------------------------------------------------- #
 COMMENT_FAILS = 0
 
 
-def like_current(page):
-    """Like the video that is on screen (if not liked yet)."""
+def like_current(page) -> bool:
     el = pick_center(page, '[data-e2e="like-icon"]')
     if el is None:
         return False
@@ -663,24 +644,22 @@ def like_current(page):
         pause(0.8, 2.0)
         el.click(timeout=4000)
         bump("likes")
-        log(f"liked a video (today: {STATS['likes']}/{LIKE_CAP})")
+        log(f"liked video (today: {STATS['likes']}/{LIKE_CAP})")
         pause(0.5, 1.2)
         return True
     except (PWTimeout, PWError):
         return False
 
 
-def close_comments(page):
+def close_comments(page) -> None:
     try:
         page.keyboard.press("Escape")
-        page.evaluate("document.activeElement && document.activeElement.blur && "
-                      "document.activeElement.blur()")
+        page.evaluate("document.activeElement && document.activeElement.blur && document.activeElement.blur()")
     except PWError:
         pass
 
 
-def comment_current(page, context_text):
-    """Write a short comment on the video that is on screen."""
+def comment_current(page, context_text: str) -> bool:
     global COMMENT_FAILS
     icon = pick_center(page, '[data-e2e="comment-icon"]')
     if icon is None:
@@ -700,7 +679,7 @@ def comment_current(page, context_text):
                 continue
         if box is None:
             COMMENT_FAILS += 1
-            log("comment box not found, skipping")
+            log("comment box unlocatable")
             return False
         pause(0.8, 2)
         box.click(timeout=3000)
@@ -713,7 +692,7 @@ def comment_current(page, context_text):
                 post.first.click(timeout=3000)
                 posted = True
             except (PWTimeout, PWError):
-                pass  # button not clickable right now, fall back to Enter below
+                pass
         if not posted:
             page.keyboard.press("Enter")
         COMMENT_FAILS = 0
@@ -723,7 +702,7 @@ def comment_current(page, context_text):
         return True
     except (PWTimeout, PWError) as e:
         COMMENT_FAILS += 1
-        log(f"comment failed, skipping ({type(e).__name__})")
+        log(f"comment failed: {type(e).__name__}")
         return False
     finally:
         close_comments(page)
@@ -732,8 +711,7 @@ def comment_current(page, context_text):
 # --------------------------------------------------------------------------- #
 # Profile visit
 # --------------------------------------------------------------------------- #
-def block_heavy(tab):
-    """A profile tab needs no pictures/videos/fonts: block them to save CPU + data."""
+def block_heavy(tab) -> None:
     tab.route(
         "**/*",
         lambda r: r.abort()
@@ -742,43 +720,35 @@ def block_heavy(tab):
     )
 
 
-def dwell_on_profile(tab, arrived_at=None):
+def dwell_on_profile(tab, arrived_at: float | None = None) -> None:
     if arrived_at is not None:
         left = PROFILE_HARD_MIN - (time.time() - arrived_at)
         if left > 0:
-            time.sleep(left)  # never leave a profile before this many real seconds have passed
+            time.sleep(left)
     pause(1, 2)
     try:
         tab.mouse.wheel(0, random.randint(150, 500))
     except PWError:
         pass
-    pause(PROFILE_MIN, PROFILE_MAX, floor=1.5)  # a little extra, natural variation
+    pause(PROFILE_MIN, PROFILE_MAX, floor=1.5)
 
 
-_ACT_FAIL_LOGGED = [0]  # cap how many debug screenshots we save per run
+_ACT_FAIL_LOGGED = [0]
 
-def _act_fail(tab, reason):
-    """Log why a like/comment attempt didn't happen, and save one screenshot+HTML
-    per run (not every time) so the actual page can be inspected afterwards."""
-    log(f"like/comment attempt failed: {reason}")
+
+def _act_fail(tab, reason: str) -> None:
+    log(f"like/comment action skipped: {reason}")
     if _ACT_FAIL_LOGGED[0] < 3:
         _ACT_FAIL_LOGGED[0] += 1
         save_debug(tab, f"act_fail_{_ACT_FAIL_LOGGED[0]}_{reason}")
 
 
-def act_on_profile(tab, do_like, do_comment, context_text, target_vid=None):
-    """Open a video from the CREATOR'S OWN profile grid and like/comment it there
-    (not on the main feed / hashtag page). Verified against the real TikTok profile
-    layout: [data-e2e="user-post-item"] opens an in-page overlay with the usual
-    like-icon / comment-icon, closed with the [aria-label="Close"] button.
-    NOTE: TikTok changes this markup over time, so every failure path here logs
-    why it failed and (up to 3x per run) saves a screenshot+HTML dump, instead of
-    failing silently - that was the actual bug: real failures were invisible."""
+def act_on_profile(tab, do_like: bool, do_comment: bool, context_text: str, target_vid: str | None = None) -> bool:
     try:
         tab.wait_for_selector('[data-e2e="user-post-item"]', timeout=8000)
     except PWTimeout:
         _act_fail(tab, "no_posts_found")
-        return False  # empty/private profile, OR the post-grid selector no longer matches
+        return False
     try:
         posts = tab.locator('[data-e2e="user-post-item"]')
         count = posts.count()
@@ -816,11 +786,11 @@ def act_on_profile(tab, do_like, do_comment, context_text, target_vid=None):
             pass
 
 
-def record_visit(user):
+def record_visit(user: str) -> None:
     bump("profiles")
     mark_seen(user)
     save_stats()
-    log(f"opened profile @{user or '?'}")
+    log(f"visited profile @{user or '?'}")
     try:
         with open("visits.txt", "a", encoding="utf-8") as f:
             f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S}  @{user or '?'}\n")
@@ -829,15 +799,14 @@ def record_visit(user):
 
 
 # --------------------------------------------------------------------------- #
-# SOURCE = feed : For You feed, only Kurdish videos
+# SOURCE = feed
 # --------------------------------------------------------------------------- #
-def visit_feed_video(page):
-    """Returns 'visited', 'skipped' or raises on failure."""
+def visit_feed_video(page) -> str:
     if "/@" in page.url or not page.url.startswith(ORIGIN):
         open_feed(page)
 
     wait_for_feed(page)
-    pause(0.5, 1)  # let the video settle
+    pause(0.5, 1)
 
     el, user = find_author(page)
     if el is None:
@@ -846,15 +815,15 @@ def visit_feed_video(page):
 
     text = article_text(page) + " " + (user or "")
     if KURDISH_ONLY and not is_kurdish(text):
-        advance(page, user)  # not Kurdish: swipe on quickly
+        advance(page, user)
         return "skipped"
     if DEDUPE and user and user in SEEN:
         advance(page, user)
         return "skipped"
 
-    pause(WATCH_MIN, WATCH_MAX)  # "watch" the video a bit
+    pause(WATCH_MIN, WATCH_MAX)
     if random.random() < 0.12:
-        pause(8, 20)  # sometimes really watch it
+        pause(8, 20)
 
     do_like = want(LIKE_CHANCE, "likes", LIKE_CAP)
     do_comment = COMMENT_FAILS < 3 and want(COMMENT_CHANCE, "comments", COMMENT_CAP)
@@ -868,10 +837,8 @@ def visit_feed_video(page):
         if not (do_like or do_comment):
             block_heavy(tab)
         arrived = time.time()
-        tab.goto(f"{ORIGIN}/@{user}", wait_until="domcontentloaded", timeout=30000,
-                 referer=FEED_URL)
+        tab.goto(f"{ORIGIN}/@{user}", wait_until="domcontentloaded", timeout=30000, referer=FEED_URL)
         if do_like or do_comment:
-            # like/comment on a video from THEIR profile, not on the main feed
             act_on_profile(tab, do_like, do_comment, text)
         dwell_on_profile(tab, arrived)
     finally:
@@ -890,14 +857,14 @@ def visit_feed_video(page):
     return "visited"
 
 
-def run_feed(page, deadline, pacer):
+def run_feed(page, deadline: float, pacer: Pacer) -> int:
     errors, checked = 0, 0
     while time.time() < deadline:
         if not wait_until_allowed(deadline):
             break
         try:
             if captcha_present(page):
-                log("captcha detected, waiting a bit and reloading")
+                log("CAPTCHA detected, waiting and reloading feed")
                 save_debug(page, f"captcha_{int(time.time())}")
                 time.sleep(random.uniform(60, 120))
                 open_feed(page)
@@ -912,10 +879,10 @@ def run_feed(page, deadline, pacer):
                     if not pacer.done_one(deadline):
                         break
                 if RELOAD_EVERY and checked % RELOAD_EVERY == 0:
-                    open_feed(page)  # quick reload: brings new creators, frees memory
+                    open_feed(page)
         except KeyboardInterrupt:
             break
-        except Exception as e:  # keep running, recover by reloading the feed
+        except Exception as e:
             errors += 1
             log(f"error ({errors}/{MAX_ERRORS_IN_ROW}): {type(e).__name__}: {str(e)[:150]}")
             save_debug(page, f"error_{errors}")
@@ -925,7 +892,7 @@ def run_feed(page, deadline, pacer):
             except Exception:
                 pass
         if errors >= MAX_ERRORS_IN_ROW:
-            log("too many errors in a row, stopping")
+            log("too many successive errors, terminating")
             save_debug(page, "too_many_errors")
             return 4
     return 0
@@ -934,200 +901,147 @@ def run_feed(page, deadline, pacer):
 # --------------------------------------------------------------------------- #
 # SOURCE = tags : Kurdish hashtag pages -> new Kurdish creators
 # --------------------------------------------------------------------------- #
-def diag(page):
-    """Log what the page really shows (helps when TikTok serves an empty/blocked page)."""
+def harvest_tag_page(page, tag: str) -> list[dict]:
+    url = f"{ORIGIN}/tag/{quote(tag)}"
     try:
-        info = page.evaluate(
-            "() => ({u: location.href, t: document.title, "
-            "v: document.querySelectorAll('a[href*=\"/video/\"]').length, "
-            "b: (document.body.innerText || '').replace(/\\s+/g, ' ').slice(0, 160)})")
-        log(f"page shows: url={info.get('u')} title={info.get('t')!r} video_links={info.get('v')} "
-            f"text={info.get('b')!r}")
-    except Exception:
-        pass
+        page.goto(url, wait_until="domcontentloaded", timeout=40000)
+        pause(2, 4)
+        for _ in range(3):
+            page.mouse.wheel(0, random.randint(400, 800))
+            pause(1, 2)
+        items = page.evaluate(HARVEST_JS) or []
+        return items
+    except PWError as e:
+        log(f"failed to load tag page #{tag}: {e}")
+        return []
 
 
-def collect_candidates(page, tag):
-    """Open a hashtag page and return NEW Kurdish creators found there."""
-    page.goto(f"{ORIGIN}/tag/{quote(tag)}", wait_until="domcontentloaded", timeout=60000)
-    try:
-        page.wait_for_selector('a[href*="/video/"]', timeout=25000)
-    except PWTimeout:
-        diag(page)
-        raise
-    pause(2, 4)
-    for _ in range(random.randint(2, 4)):  # scroll to load more videos
-        try:
-            page.mouse.wheel(0, random.randint(1200, 2400))
-        except PWError:
-            pass
-        pause(1.2, 2.5)
-    items = page.evaluate(HARVEST_JS) or []
-    cands, users = [], set()
-    for it in items:
-        user = it.get("user")
-        if not user or user in users:
-            continue
-        if DEDUPE and user in SEEN:
-            continue
-        if KURDISH_ONLY and not is_kurdish(it.get("text", "") + " " + user):
-            continue
-        users.add(user)
-        cands.append(it)
-    random.shuffle(cands)
-    return cands
+def process_tag_item(page, item: dict) -> bool:
+    user = item.get("user")
+    vid = item.get("vid")
+    text = item.get("text", "") + " " + (user or "")
 
+    if not user:
+        return False
+    if DEDUPE and user in SEEN:
+        return False
+    if KURDISH_ONLY and not is_kurdish(text):
+        return False
 
-def visit_candidate(ctx, cand):
-    """Visit the creator's profile; (rarely) like/comment happens ON the profile
-    (opening one of their own videos there), never on the hashtag page."""
-    user = cand["user"]
     do_like = want(LIKE_CHANCE, "likes", LIKE_CAP)
     do_comment = COMMENT_FAILS < 3 and want(COMMENT_CHANCE, "comments", COMMENT_CAP)
-    tab = ctx.new_page()
+
+    tab = page.context.new_page()
     try:
         if not (do_like or do_comment):
             block_heavy(tab)
         arrived = time.time()
-        tab.goto(f"{ORIGIN}/@{user}", wait_until="domcontentloaded", timeout=30000,
-                 referer=ORIGIN + "/")
+        tab.goto(f"{ORIGIN}/@{user}", wait_until="domcontentloaded", timeout=30000)
         if do_like or do_comment:
-            act_on_profile(tab, do_like, do_comment, cand.get("text", ""), target_vid=cand.get("vid"))
+            act_on_profile(tab, do_like, do_comment, text, target_vid=vid)
         dwell_on_profile(tab, arrived)
+        record_visit(user)
+        return True
+    except PWError as e:
+        log(f"error visiting @{user}: {e}")
+        return False
     finally:
         try:
             tab.close()
         except PWError:
             pass
-    record_visit(user)
 
 
-def run_tags(ctx, page, deadline, pacer):
-    errors, empty_rounds, last_tag, tag_fail = 0, 0, None, 0
-    while time.time() < deadline:
+def run_tags(page, deadline: float, pacer: Pacer) -> int:
+    tag_idx = 0
+    errors = 0
+    while time.time() < deadline and TAGS:
         if not wait_until_allowed(deadline):
             break
-        tag = random.choice([t for t in TAGS if t != last_tag] or TAGS)
-        last_tag = tag
-        try:
-            if captcha_present(page):
-                log("captcha detected, waiting a bit")
-                save_debug(page, f"captcha_{int(time.time())}")
-                time.sleep(random.uniform(60, 120))
-                errors += 1
-                continue
-            cands = collect_candidates(page, tag)
-            tag_fail = 0
-            log(f"#{tag}: {len(cands)} new Kurdish creators found")
-            if not cands:
-                empty_rounds += 1
-                if empty_rounds >= max(3, len(TAGS)):
-                    log("no new Kurdish creators found on any hashtag, stopping")
-                    return 0
-                continue
-            empty_rounds = 0
-            done_here = 0
-            for cand in cands:
-                if time.time() >= deadline or done_here >= PER_TAG:
-                    break
-                ok, _ = allowed_now()
-                if not ok:
-                    break
-                if random.random() < SKIP_CHANCE:
-                    continue
-                visit_candidate(ctx, cand)
-                done_here += 1
+        tag = TAGS[tag_idx % len(TAGS)]
+        tag_idx += 1
+        log(f"scraping hashtag: #{tag}")
+
+        items = harvest_tag_page(page, tag)
+        if not items:
+            errors += 1
+            if errors >= MAX_ERRORS_IN_ROW:
+                log("max consecutive errors reached in tag mode")
+                return 4
+            continue
+
+        visited_in_tag = 0
+        for item in items:
+            if time.time() >= deadline or not wait_until_allowed(deadline):
+                break
+            if process_tag_item(page, item):
                 errors = 0
+                visited_in_tag += 1
                 if not pacer.done_one(deadline):
                     return 0
-        except KeyboardInterrupt:
-            break
-        except Exception as e:
-            errors += 1
-            log(f"error ({errors}/{MAX_ERRORS_IN_ROW}): {type(e).__name__}: {str(e)[:150]}")
-            save_debug(page, f"error_{errors}")
-            if isinstance(e, PWTimeout) and "/video/" in str(e):
-                tag_fail += 1
-            time.sleep(random.uniform(3, 6))
-            if tag_fail >= 2:
-                # hashtag pages come back empty from this server: use the For You feed instead
-                log("hashtag pages are empty here, switching to the For You feed (Kurdish only)")
-                try:
-                    open_feed(page)
-                except Exception as e2:
-                    log(f"could not open the feed: {type(e2).__name__}")
-                    return 4
-                return run_feed(page, deadline, pacer)
-        if errors >= MAX_ERRORS_IN_ROW:
-            log("too many errors in a row, stopping")
-            save_debug(page, "too_many_errors")
-            return 4
+                if visited_in_tag >= PER_TAG:
+                    break
+            pause(1, 3)
     return 0
 
 
 # --------------------------------------------------------------------------- #
-# Main
+# Main Entry Point
 # --------------------------------------------------------------------------- #
 def main():
-    cookies = load_cookies()
-    load_stats()
-    publish_live(force=True)
-    load_comments()
     lower_priority()
-    deadline = time.time() + RUN_MINUTES * 60
+    load_comments()
+    load_stats()
 
-    if not wait_until_allowed(deadline):
-        return
-    if START_JITTER_MIN > 0 and OUTSIDE != "wait":
+    if START_JITTER_MIN > 0:
         delay = random.uniform(0, START_JITTER_MIN * 60)
-        log(f"random start delay: {int(delay / 60)} min")
+        log(f"jitter delay active: waiting {int(delay)}s before start")
         time.sleep(delay)
-        if not wait_until_allowed(deadline):
-            return
 
-    code = 0
+    deadline = time.time() + (RUN_MINUTES * 60)
     start_watchdog(deadline)
+
+    cookies = load_cookies()
+
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=HEADLESS,
-            args=["--disable-blink-features=AutomationControlled", "--no-sandbox",
-                  "--mute-audio", "--disable-extensions"],
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--mute-audio",
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+            ]
         )
-        ctx = browser.new_context(
+        context = browser.new_context(
             user_agent=USER_AGENT,
-            viewport={"width": 1366, "height": 768},
+            viewport={"width": 1280, "height": 800},
             locale="en-US",
         )
-        ctx.add_cookies(cookies)
-        page = ctx.new_page()
-        page.set_default_timeout(20000)
+        context.add_cookies(cookies)
+
+        page = context.new_page()
+        pacer = Pacer()
 
         try:
+            log("opening main feed to verify session")
             open_feed(page)
-        except Exception as e:
-            log(f"could not open TikTok: {e}")
-            save_debug(page, "open_failed")
-            sys.exit(3)
 
-        if not is_logged_in(page):
-            log("NOT LOGGED IN - the cookies are missing or expired. Export them again.")
-            save_debug(page, "not_logged_in")
-            sys.exit(2)
-        log(f"logged in, starting ({SOURCE} mode, Kurdish only: {KURDISH_ONLY})")
+            if not is_logged_in(page):
+                log("WARNING: session cookie invalid or expired. Running logged-out.")
 
-        pacer = Pacer()
-        if SOURCE == "feed":
-            code = run_feed(page, deadline, pacer)
-        else:
-            code = run_tags(ctx, page, deadline, pacer)
+            if SOURCE == "tags":
+                ret = run_tags(page, deadline, pacer)
+            else:
+                ret = run_feed(page, deadline, pacer)
 
-        log(f"finished. this run: {pacer.count} profiles. today: {STATS.get('profiles', 0)} "
-            f"profiles, {STATS.get('likes', 0)} likes, {STATS.get('comments', 0)} comments")
-        save_stats()
-        publish_live(force=True)
-        browser.close()
-    if code:
-        sys.exit(code)
+        finally:
+            publish_live(force=True)
+            context.close()
+            browser.close()
+            log("finished execution")
+
+    sys.exit(ret if 'ret' in locals() else 0)
 
 
 if __name__ == "__main__":
