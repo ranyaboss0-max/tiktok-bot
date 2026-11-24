@@ -1,10 +1,5 @@
 {
  "days": {
-  "2026-09-26": {
-   "profiles": 1000,
-   "likes": 0,
-   "comments": 0
-  },
   "2026-09-27": {
    "profiles": 1000,
    "likes": 0,
@@ -299,6 +294,11 @@
    "profiles": 120,
    "likes": 0,
    "comments": 0
+  },
+  "2026-11-25": {
+   "profiles": 0,
+   "likes": 0,
+   "comments": 0
   }
  },
  "caps": {
@@ -306,5 +306,5 @@
   "likes": 100,
   "comments": 50
  },
- "updated": "2026-11-24T14:36:45+03:00"
+ "updated": "2026-11-25T00:04:13+03:00"
 }
